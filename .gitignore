@@ -1,0 +1,39 @@
+# Secrets & config local (tuyệt đối không push)
+.env
+.env.local
+
+# Database & data (chứa credential mã hóa)
+*.db
+*.sqlite
+*.sqlite3
+data/
+backup/
+
+# Python
+backend/venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Logs
+logs/
+*.log
+
+# Build artifacts / release binaries (up sau qua GitHub Releases, không push vào git)
+ssh_manager/*.deb
+ssh_manager/*.AppImage
+*.AppImage
+*.deb
+*.zip
+*.tar.gz
+
+# Frontend
+node_modules/
+frontend/dist/
+frontend/node_modules/
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/

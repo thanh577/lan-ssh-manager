@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LAN SSH Manager</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="entertainment.css">
+<link rel="stylesheet" href="vendor/xterm.css">
+</head>
+<body>
+<div id="login-view" class="login-wrap">
+  <div class="login-card">
+    <h1>🖥️ LAN SSH Manager</h1>
+    <p class="muted">Quản lý máy LAN qua SSH — chạy nội bộ, không cần agent</p>
+    <input id="login-user" placeholder="Tên đăng nhập (mặc định: admin)" autocomplete="username">
+    <input id="login-pass" type="password" placeholder="Mật khẩu (mặc định: admin123)" autocomplete="current-password">
+    <button id="login-btn" class="btn primary">Đăng nhập</button>
+    <div id="login-err" class="err"></div>
+  </div>
+</div>
+
+<div id="app" class="hidden">
+  <header class="topbar">
+    <div class="brand">🖥️ LAN SSH Manager</div>
+    <nav class="nav">
+      <button data-view="dashboard">Tổng quan</button>
+      <button data-view="machines">Máy</button>
+      <button data-view="commands">Lệnh</button>
+      <button data-view="consoles">Console</button>
+      <button data-view="audit">Nhật ký</button>
+      <button data-view="groups">Nhóm</button>
+      <button data-view="fun">🎬 Giải trí</button>
+    </nav>
+    <div class="userbox"><span id="who"></span><button id="logout-btn" class="btn small">Đăng xuất</button></div>
+  </header>
+  <div class="layout">
+    <aside class="sidebar">
+      <h3>Máy</h3>
+      <div id="side-machines"></div>
+    </aside>
+    <main id="content" class="content"></main>
+  </div>
+</div>
+
+<div id="modal" class="modal hidden"><div class="modal-card" id="modal-card"></div></div>
+<div id="toast" class="toast hidden"></div>
+
+<script src="vendor/xterm.js"></script>
+<script src="vendor/xterm-addon-fit.js"></script>
+<script src="dailymotion.js"></script>
+<script src="entertainment.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
