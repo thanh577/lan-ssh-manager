@@ -25,6 +25,7 @@ import socket
 import sys
 import threading
 import time
+import traceback
 import urllib.request
 import webbrowser
 
@@ -171,7 +172,8 @@ class WinServer:
                 import uvicorn  # noqa: E402
                 from backend.app.main import app  # noqa: E402
             except Exception as e:
-                self.last_error = f"Không nạp được backend: {e}"
+                tb = traceback.format_exc(limit=5)
+                self.last_error = f"Không nạp được backend: {e}\n{tb[-1500:]}"
                 return "failed"
             cfg = uvicorn.Config(app, host="0.0.0.0", port=self.port, log_level="info")
             self._server = uvicorn.Server(cfg)
@@ -219,6 +221,8 @@ class Panel:
         self.msgbox = messagebox
         self.root = root
         self.srv = srv
+        self._checking = False  # health-check nền đang chạy?
+        self._panel_log = os.path.join(data_dir(), "logs", "panel.log")
         root.title("LAN SSH Manager")
         root.geometry("480x500")
         root.minsize(450, 440)
@@ -244,6 +248,7 @@ class Panel:
         logbar = tk.Frame(root)
         logbar.pack(fill="x", padx=10)
         tk.Label(logbar, text="Log server:").pack(side="left")
+        tk.Button(logbar, text="📋 Copy", command=self.on_copy_log).pack(side="right", padx=2)
         tk.Button(logbar, text="🗑 Xóa", command=self.on_clear_log).pack(side="right", padx=2)
         self.log = scrolledtext.ScrolledText(root, height=9, state="disabled", font=("TkFixedFont", 9))
         self.log.pack(fill="both", expand=True, padx=10, pady=(2, 10))
@@ -258,8 +263,15 @@ class Panel:
         self.log.insert("end", msg + "\n")
         self.log.see("end")
         self.log.configure(state="disabled")
+        try:
+            with open(self._panel_log, "a", encoding="utf-8") as f:
+                f.write(msg + "\n")
+        except OSError:
+            pass
 
     def _tick(self):
+        # Chỉ xả log (nhanh, không chặn). Health-check chạy ở luồng nền
+        # để UI không bao giờ đơ.
         while True:
             try:
                 self._log(self.srv.logq.get_nowait())
@@ -271,28 +283,64 @@ class Panel:
         except Exception:
             pass
 
+    def _check_status_bg(self):
+        try:
+            running = self.srv.is_running()
+        except Exception:
+            running = False
+        url = lan_url(self.srv.port) if running else ""
+        try:
+            self.root.after(0, lambda: self._apply_status(running, url))
+        except Exception:
+            pass
+        self._checking = False
+
+    def _apply_status(self, running, url):
+        try:
+            if running:
+                self.status_var.set("🟢 ĐANG CHẠY")
+                self.status_lbl.configure(fg="green")
+                self.url_var.set(url)
+            else:
+                self.status_var.set("🔴 ĐÃ DỪNG")
+                self.status_lbl.configure(fg="red")
+                self.url_var.set("")
+        except Exception:
+            pass
+
     def refresh_status(self):
-        if self.srv.is_running():
-            self.status_var.set("🟢 ĐANG CHẠY")
-            self.status_lbl.configure(fg="green")
-            self.url_var.set(lan_url(self.srv.port))
-        else:
-            self.status_var.set("🔴 ĐÃ DỪNG")
-            self.status_lbl.configure(fg="red")
-            self.url_var.set("")
+        if not self._checking:
+            self._checking = True
+            threading.Thread(target=self._check_status_bg, daemon=True).start()
 
     def _run_bg(self, fn, done_msg):
+        # Luồng worker CHỈ tính toán; mọi cập nhật UI dồn về main thread
+        # (tkinter không thread-safe — đụng trực tiếp dễ treo trên Windows).
         def w():
-            r = fn()
-            self._log(f"{done_msg}: {r}")
-            if r in ("failed", "timeout") and getattr(self.srv, "last_error", ""):
-                self._log("LÝ DO: " + self.srv.last_error)
-                try:
-                    self.msgbox.showerror("LAN SSH Manager", f"{done_msg} thất bại.\n\n{self.srv.last_error}")
-                except Exception:
-                    pass
-            self.refresh_status()
+            try:
+                r = fn()
+            except Exception as e:
+                r = f"exception: {e}"
+            try:
+                self.root.after(0, lambda: self._on_done(r, done_msg))
+            except Exception:
+                pass
         threading.Thread(target=w, daemon=True).start()
+
+    def _on_done(self, r, done_msg):
+        while True:
+            try:
+                self._log(self.srv.logq.get_nowait())
+            except queue.Empty:
+                break
+        self._log(f"{done_msg}: {r}")
+        if isinstance(r, str) and r in ("failed", "timeout") and getattr(self.srv, "last_error", ""):
+            self._log("LÝ DO: " + self.srv.last_error)
+            try:
+                self.msgbox.showerror("LAN SSH Manager", f"{done_msg} thất bại.\n\n{self.srv.last_error}")
+            except Exception:
+                pass
+        self.refresh_status()
 
     def on_start(self):
         self._log("Đang khởi động server...")
@@ -328,17 +376,43 @@ class Panel:
         self.log.delete("1.0", "end")
         self.log.configure(state="disabled")
 
+    def on_copy_log(self):
+        try:
+            text = self.log.get("1.0", "end-1c")
+            self.root.clipboard_clear()
+            self.root.clipboard_append(text)
+            self._log("(đã copy log vào clipboard)")
+        except Exception as e:
+            self._log(f"Copy thất bại: {e}")
+
     def on_exit(self):
         # Server chạy trong exe → đóng exe là server dừng theo, hỏi rõ trước.
-        if self.srv.is_running():
+        # stop() có thể mất ~10s nên chạy nền, xong mới destroy (không đơ UI).
+        try:
+            running = self.srv.is_running()
+        except Exception:
+            running = False
+        if running:
             try:
                 ok = self.msgbox.askyesno("Thoát", "Server đang chạy.\nDừng server và thoát?")
             except Exception:
                 ok = True
             if not ok:
                 return
-            self.srv.stop()
+            self._log("Đang dừng server để thoát...")
+            threading.Thread(target=self._exit_after_stop, daemon=True).start()
+            return
         self.root.destroy()
+
+    def _exit_after_stop(self):
+        try:
+            self.srv.stop()
+        except Exception:
+            pass
+        try:
+            self.root.after(0, self.root.destroy)
+        except Exception:
+            pass
 
 
 def run_selftest_headless(port):
