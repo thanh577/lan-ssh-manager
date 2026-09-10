@@ -31,6 +31,17 @@ import webbrowser
 PORT = int(os.environ.get("PORT", "8000"))
 
 
+# Console Windows mặc định cp1252/cp437 không in được tiếng Việt →
+# ép stdout/stderr UTF-8 ngay từ đầu (Linux không ảnh hưởng).
+for _s in (sys.stdout, sys.stderr):
+    try:
+        if _s is not None and hasattr(_s, "reconfigure"):
+            _s.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+del _s
+
+
 def app_root():
     """Thư mục gốc chứa backend/ + frontend/ (chạy source hay exe đều đúng)."""
     if getattr(sys, "frozen", False):
