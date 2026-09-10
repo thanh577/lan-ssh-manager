@@ -1,7 +1,7 @@
 """OS user management on remote machines. All commands are server-built;
 frontend only sends validated fields. Passwords are hashed locally with
-crypt(3) and never appear in commands, logs or audit in plaintext."""
-import crypt
+SHA-512 crypt ($6$, via passlib — cross-platform) and never appear in
+commands, logs or audit in plaintext."""
 import re
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -189,7 +189,14 @@ async def lock_user(mid: int, name: str, action: str,
 
 
 def _hash(password: str) -> str:
-    h = crypt.crypt(password, crypt.mksalt(crypt.METHOD_SHA512))
+    # SHA-512 crypt ($6$) — máy Linux đích hiểu trực tiếp. Dùng passlib
+    # (thuần Python, chạy cả Windows) thay vì module crypt của Unix.
+    try:
+        from passlib.hash import sha512_crypt
+        h = sha512_crypt.using(rounds=5000).hash(password)
+    except Exception:
+        import crypt  # fallback Unix khi thiếu passlib
+        h = crypt.crypt(password, crypt.mksalt(crypt.METHOD_SHA512))
     if "'" in h or len(h) > 256:
         raise HTTPException(500, "Băm mật khẩu thất bại")
     return h
