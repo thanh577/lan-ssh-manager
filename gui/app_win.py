@@ -32,6 +32,15 @@ import webbrowser
 PORT = int(os.environ.get("PORT", "8000"))
 
 
+# Exe --windowed không có console: sys.stdout/stderr là None → nhiều thư viện
+# crash ngay khi chạm vào (VD uvicorn logging gọi sys.stdout.isatty() lúc
+# Config → "Unable to configure formatter 'default'"). Chặn bằng dummy.
+if sys.stdout is None:
+    sys.stdout = open(os.devnull, "w")
+if sys.stderr is None:
+    sys.stderr = open(os.devnull, "w")
+
+
 # Console Windows mặc định cp1252/cp437 không in được tiếng Việt →
 # ép stdout/stderr UTF-8 ngay từ đầu (Linux không ảnh hưởng).
 for _s in (sys.stdout, sys.stderr):
