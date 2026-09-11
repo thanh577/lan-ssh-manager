@@ -37,7 +37,6 @@ jobs:
           if ([string]::IsNullOrWhiteSpace($ver)) { $ver = "1.2.4" }
           "VER=$ver" >> $env:GITHUB_ENV
           "EXE_NAME=LAN-SSH-Manager-win64-$ver.exe" >> $env:GITHUB_ENV
-          "DEBUG_NAME=LAN-SSH-Manager-win64-$ver-debug.exe" >> $env:GITHUB_ENV
 
       - name: Install deps
         run: |
@@ -63,24 +62,8 @@ jobs:
             gui/app_win.py
           Copy-Item "dist\$env:EXE_NAME" -Destination "$env:EXE_NAME"
 
-      - name: Build debug exe (có console, để xem lỗi)
-        run: |
-          pyinstaller --noconfirm --clean --onefile --console `
-            --name "$($env:DEBUG_NAME -replace '\.exe$','')" `
-            --paths . `
-            --add-data "frontend;frontend" `
-            --add-data ".env.example;." `
-            --collect-all uvicorn `
-            --collect-all asyncssh `
-            --copy-metadata asyncssh `
-            --copy-metadata uvicorn `
-            gui/app_win.py
-          Copy-Item "dist\$env:DEBUG_NAME" -Destination "$env:DEBUG_NAME"
-
-      - name: Upload exes
+      - name: Upload exe
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.EXE_NAME }}-all
-          path: |
-            ${{ env.EXE_NAME }}
-            ${{ env.DEBUG_NAME }}
+          name: ${{ env.EXE_NAME }}
+          path: ${{ env.EXE_NAME }}
