@@ -6,7 +6,7 @@ import os
 
 from .db.database import init_db
 from .core.logging_conf import logger
-from .api import auth, machines, groups, dashboard, system, commands, services_api, logs, files, audit, terminal, users_api, consoles
+from .api import auth, machines, groups, dashboard, system, commands, services_api, logs, files, audit, terminal, users_api, consoles, youtube
 
 app = FastAPI(title="LAN SSH Manager", version="1.1.0")
 
@@ -29,6 +29,7 @@ app.include_router(terminal.router)
 app.include_router(users_api.router)
 app.include_router(consoles.router)
 app.include_router(consoles.router_ws)
+app.include_router(youtube.router)
 
 
 @app.get("/api/health")
@@ -53,6 +54,11 @@ def app_js():
 @app.get("/dailymotion.js", include_in_schema=False)
 def dailymotion_js():
     return FileResponse(os.path.join(FRONTEND_DIR, "dailymotion.js"), media_type="application/javascript")
+
+
+@app.get("/youtube.js", include_in_schema=False)
+def youtube_js():
+    return FileResponse(os.path.join(FRONTEND_DIR, "youtube.js"), media_type="application/javascript")
 
 
 @app.get("/entertainment.js", include_in_schema=False)

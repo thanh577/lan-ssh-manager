@@ -1,8 +1,11 @@
-// View Giải trí — xem Dailymotion trực tuyến (port vanilla từ app React xem_daylymotion)
-// Dùng API công khai qua window.DM (frontend/dailymotion.js). Không cần backend, không cần key.
+// View Giải trí — xem Dailymotion + YouTube trực tuyến (port vanilla từ app React xem_daylymotion)
+// Dùng API công khai qua window.DM (frontend/dailymotion.js) và window.YT (frontend/youtube.js).
+// Hai provider cùng API surface nên logic list/watch/channel/playlist tái sử dụng nguyên.
 (function () {
   const PAGE = 12;
+  const SRC_KEY = "fun.source.v1";
   const S = window._fun = window._fun || {
+    source: (() => { try { return localStorage.getItem(SRC_KEY) === "yt" ? "yt" : "dm"; } catch { return "dm"; } })(),
     tab: "home", query: "", sort: "relevance",
     videos: [], page: 1, hasMore: false, total: 0, loading: false, error: "",
     urlInput: "", currentId: null, detail: null, related: [], relatedSource: "",
@@ -10,25 +13,44 @@
     queue: [], queueIndex: -1, queueMeta: null, queueLoading: false,
     autoNext: true, loopList: true,
     channelInput: "", channel: "", playlistInput: "", playlistMeta: null,
-    saved: (window.DM ? DM.loadSaved() : []),
+    saved: [],
   };
+  try { S.saved = (S.source === "yt" && window.YT ? YT.loadSaved() : DM.loadSaved()); } catch { S.saved = []; }
+
+  // Provider hiện tại — cùng shape nên gọi P().searchVideos(...) như nhau
+  const P = () => (S.source === "yt" && window.YT ? window.YT : window.DM);
+  const SRC_LABEL = () => (S.source === "yt" ? "YouTube" : "Dailymotion");
+
+  function switchSource(src) {
+    if (S.source === src) return;
+    S.source = src;
+    try { localStorage.setItem(SRC_KEY, src); } catch {}
+    S.tab = "home"; S.query = ""; S.videos = []; S.page = 1; S.hasMore = false; S.total = 0; S.error = "";
+    S.currentId = null; S.detail = null; S.related = []; S.relatedSource = ""; S.relatedPlaylistId = null;
+    S.queue = []; S.queueIndex = -1; S.queueMeta = null;
+    S.channel = ""; S.channelInput = ""; S.playlistMeta = null; S.playlistInput = ""; S.urlInput = "";
+    try { S.saved = P().loadSaved(); } catch { S.saved = []; }
+    render();
+    loadList(1, undefined);
+  }
 
   const escH = (s) => (window.esc
     ? window.esc(s)
     : String(s ?? "").replace(/[&<>"'`]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#x27;", "`": "&#x60;" }[c])));
-  const fmtDur = (s) => window.DM.formatDuration(s);
-  const fmtViews = (n) => window.DM.formatViews(n);
-  const fmtDate = (t) => window.DM.formatDate(t);
+  const fmtDur = (s) => P().formatDuration(s);
+  const fmtViews = (n) => P().formatViews(n);
+  const fmtDate = (t) => P().formatDate(t);
 
   // ---- data loaders ----
   async function loadList(nextPage, mode, reset = true) {
+    const api = P();
     S.loading = true; S.error = ""; render();
     try {
       let data;
-      if (mode?.type === "channel") data = await DM.userVideos(mode.owner, { page: nextPage, limit: PAGE, sort: "recent" });
-      else if (mode?.type === "playlist") data = await DM.playlistVideos(mode.id, { page: nextPage, limit: PAGE });
-      else if (mode?.type === "search") data = await DM.searchVideos({ query: mode.query, page: nextPage, limit: PAGE, sort: S.sort });
-      else data = await DM.trendingVideos({ page: nextPage, limit: PAGE });
+      if (mode?.type === "channel") data = await api.userVideos(mode.owner, { page: nextPage, limit: PAGE, sort: "recent" });
+      else if (mode?.type === "playlist") data = await api.playlistVideos(mode.id, { page: nextPage, limit: PAGE });
+      else if (mode?.type === "search") data = await api.searchVideos({ query: mode.query, page: nextPage, limit: PAGE, sort: S.sort });
+      else data = await api.trendingVideos({ page: nextPage, limit: PAGE });
       S.videos = reset ? (data.list ?? []) : [...S.videos, ...(data.list ?? [])];
       S.hasMore = Boolean(data.has_more);
       S.total = data.total ?? 0;
@@ -38,7 +60,8 @@
   }
 
   async function openVideo(id, opts = {}) {
-    const vid = DM.parseVideoId(id) || id;
+    const api = P();
+    const vid = api.parseVideoId(id) || id;
     if (!vid) return;
     const playlistId = opts.playlistId ?? null;
     const keepQueue = opts.keepQueue ?? false;
@@ -50,10 +73,10 @@
     try { document.querySelector("#content")?.scrollTo?.({ top: 0 }); } catch {}
     try {
       const [d, r, p, meta] = await Promise.all([
-        DM.videoDetail(vid),
-        DM.relatedVideos(vid, { limit: 12 }).catch(() => ({ list: [] })),
-        playlistId ? DM.playlistVideos(playlistId, { page: 1, limit: 30 }).catch(() => null) : Promise.resolve(null),
-        playlistId ? DM.playlistInfo(playlistId).catch(() => null) : Promise.resolve(null),
+        api.videoDetail(vid),
+        api.relatedVideos(vid, { limit: 12 }).catch(() => ({ list: [] })),
+        playlistId ? api.playlistVideos(playlistId, { page: 1, limit: 30 }).catch(() => null) : Promise.resolve(null),
+        playlistId ? api.playlistInfo(playlistId).catch(() => null) : Promise.resolve(null),
       ]);
       S.detail = d;
       if (p?.list?.length) {
@@ -71,7 +94,7 @@
         let done = false;
         if (owner) {
           try {
-            const ch = await DM.userVideos(owner, { limit: 12, sort: "recent" });
+            const ch = await api.userVideos(owner, { limit: 12, sort: "recent" });
             if (ch?.list?.length) { S.related = ch.list.filter((v) => v.id !== vid); S.relatedSource = "channel"; done = true; }
           } catch {}
         }
@@ -79,7 +102,7 @@
           const kw = (Array.isArray(d?.tags) && d.tags[0]) || (d?.title ?? "").split(/\s+/).slice(0, 3).join(" ");
           if (kw) {
             try {
-              const s = await DM.searchVideos({ query: String(kw), limit: 12 });
+              const s = await api.searchVideos({ query: String(kw), limit: 12 });
               const list = (s?.list ?? []).filter((v) => v.id !== vid);
               if (list.length) { S.related = list; S.relatedSource = "search"; }
             } catch {}
@@ -91,14 +114,15 @@
   }
 
   async function playPlaylist(pid, startVid = null) {
-    const id = DM.parsePlaylistId(pid) ?? pid;
+    const api = P();
+    const id = api.parsePlaylistId(pid) ?? pid;
     if (!id) return;
     S.tab = "watch"; S.queueLoading = true; S.detailError = ""; S.playlistInput = id;
     render();
     try {
       const [meta, all] = await Promise.all([
-        DM.playlistInfo(id).catch(() => null),
-        DM.fetchAllPlaylistVideos(id, { limitPerPage: 30, maxTotal: 100 }),
+        api.playlistInfo(id).catch(() => null),
+        api.fetchAllPlaylistVideos(id, { limitPerPage: 30, maxTotal: 100 }),
       ]);
       if (!all.length) throw new Error("Playlist trống hoặc không đọc được.");
       S.queue = all;
@@ -133,13 +157,20 @@
     playAt(p);
   }
 
-  // Tự phát tiếp khi player báo hết video
+  // Tự phát tiếp khi player báo hết video (DM + YouTube)
   if (!window._funMsgHook) {
     window._funMsgHook = true;
     window.addEventListener("message", (e) => {
       try {
-        if (!String(e.origin ?? "").includes("dailymotion.com")) return;
-        const { event: ev } = DM.parsePlayerEvent(e.data);
+        const origin = String(e.origin ?? "");
+        const isDM = origin.includes("dailymotion.com");
+        const isYT = origin.includes("youtube");
+        if (!isDM && !isYT) return;
+        let ev = "";
+        try { ev = DM.parsePlayerEvent(e.data).event || ""; } catch {}
+        if (!ev || /^(state|info)/i.test(ev)) {
+          try { ev = (window.YT ? YT.parsePlayerEvent(e.data).event : "") || ev; } catch {}
+        }
         if (/^(end|video_end)$/i.test(ev || "")) {
           if (S.autoNext && S.queue.length > 1) playNext();
         }
@@ -148,12 +179,13 @@
   }
 
   function toggleSave(meta) {
+    const api = P();
     const id = meta?.id ?? meta?.playlistId;
     if (!id) return;
     S.saved = S.saved.some((x) => String(x.id) === String(id))
-      ? DM.removeSaved(S.saved, id)
-      : DM.upsertSaved(S.saved, meta);
-    DM.persistSaved(S.saved);
+      ? api.removeSaved(S.saved, id)
+      : api.upsertSaved(S.saved, meta);
+    api.persistSaved(S.saved);
     render();
   }
   const isSaved = (id) => (id != null) && S.saved.some((x) => String(x.id) === String(id));
@@ -173,11 +205,18 @@
     if (!c) return;
     try { c.classList.add("wide"); } catch {}
     const tabs = [["home", "🔥 Thịnh hành"], ["watch", "▶ Xem video"], ["channel", "📺 Kênh"], ["playlist", "📃 Playlist"]];
-    let h = `<h2>🎬 Giải trí <span class="muted" style="font-size:13px">— xem Dailymotion trực tuyến (không cần key)</span></h2>
+    const srcName = SRC_LABEL();
+    const srcHint = S.source === "yt" ? "không cần key" : "không cần key";
+    let h = `<h2>🎬 Giải trí <span class="muted" style="font-size:13px">— xem ${srcName} trực tuyến (${srcHint})</span></h2>
+    <div class="tabs" style="margin-bottom:8px">
+      <button data-funsrc="dm" class="${S.source === "dm" ? "active" : ""}">📺 Dailymotion</button>
+      <button data-funsrc="yt" class="${S.source === "yt" ? "active" : ""}">▶️ YouTube</button>
+    </div>
     <div class="tabs">${tabs.map(([t, l]) => `<button data-funtab="${t}" class="${S.tab === t ? "active" : ""}">${l}</button>`).join("")}</div>
     <div id="fun-body"></div>
-    <p class="muted">Nguồn video: Dailymotion Data API công khai + trình phát nhúng chính thức — chỉ xem (embed), không tải/lưu trữ.</p>`;
+    <p class="muted">Nguồn video: ${S.source === "yt" ? "YouTube qua API công khai Invidious + trình phát nhúng chính thức" : "Dailymotion Data API công khai + trình phát nhúng chính thức"} — chỉ xem (embed), không tải/lưu trữ.</p>`;
     c.innerHTML = h;
+    c.querySelectorAll("[data-funsrc]").forEach(b => b.onclick = () => switchSource(b.dataset.funsrc));
     c.querySelectorAll("[data-funtab]").forEach(b => b.onclick = () => {
       S.tab = b.dataset.funtab;
       if (S.tab === "home" && !S.videos.length && !S.query) loadList(1, undefined);
@@ -219,14 +258,18 @@
   }
 
   function renderWatch(body) {
+    const api = P();
     const SRC = { playlist: "Cùng playlist", related: "Liên quan", channel: "Cùng kênh", search: "Tìm theo chủ đề" };
     const q = S.queue, qi = S.queueIndex;
     const filtered = S.relatedFilter.trim()
       ? S.related.filter((v) => ((v.title ?? "") + " " + (v["owner.screenname"] ?? "")).toLowerCase().includes(S.relatedFilter.trim().toLowerCase()))
       : S.related;
+    const urlPh = S.source === "yt"
+      ? "Dán link YouTube (watch / youtu.be / shorts) HOẶC playlist (?list=…) là xem được ngay…"
+      : "Dán link video HOẶC playlist là xem được ngay…";
     body.innerHTML = `
       <div class="fun-search">
-        <input id="fun-url" placeholder="Dán link video HOẶC playlist là xem được ngay…" value="${escH(S.urlInput)}">
+        <input id="fun-url" placeholder="${urlPh}" value="${escH(S.urlInput)}">
         <button class="btn primary" style="width:auto" id="fun-view">Xem</button>
       </div>
       ${S.detailError ? `<p class="err">${escH(S.detailError)}</p>` : ""}
@@ -241,14 +284,14 @@
           <button class="btn small" id="fun-saveq">${isSaved(S.relatedPlaylistId) ? "★ Đã lưu" : "☆ Lưu playlist"}</button>
           <button class="btn small" id="fun-exitq">Thoát playlist</button>
         </div></div>` : ""}
-      ${S.currentId ? `<div class="fun-player"><iframe src="${escH(DM.embedUrl(S.currentId, { autoplay: true, playlistId: q.length > 1 ? S.relatedPlaylistId : null }))}"
-        allow="autoplay; fullscreen; picture-in-picture; web-share" allowfullscreen frameborder="0" title="Dailymotion player"></iframe></div>
+      ${S.currentId ? `<div class="fun-player"><iframe src="${escH(api.embedUrl(S.currentId, { autoplay: true, playlistId: q.length > 1 ? S.relatedPlaylistId : null }))}"
+        allow="autoplay; fullscreen; picture-in-picture; web-share" allowfullscreen frameborder="0" title="${SRC_LABEL()} player"></iframe></div>
         ${S.detail ? `<div class="card" style="margin-top:10px"><h3 style="margin:0 0 6px">${escH(S.detail.title)}</h3>
           <p class="muted">${escH(S.detail["owner.screenname"] ?? "")} • ${escH(fmtViews(S.detail.views_total))} lượt xem • ${escH(fmtDate(S.detail.created_time))} • ${escH(fmtDur(S.detail.duration))}</p>
           <p class="muted">${escH((S.detail.description || "Không có mô tả.").slice(0, 600))}</p>
-          <a href="${escH(S.detail.url || "")}" target="_blank" rel="noreferrer">Mở trên Dailymotion ↗</a></div>`
+          <a href="${escH(S.detail.url || "")}" target="_blank" rel="noreferrer">Mở trên ${SRC_LABEL()} ↗</a></div>`
         : (!S.detailError ? `<p class="muted">Đang tải thông tin video…</p>` : "")}`
-      : `<p class="muted">Dán link video Dailymotion vào ô trên rồi bấm <b>Xem</b>, hoặc bấm vào bất kỳ video nào ở tab Thịnh hành.</p>`}
+      : `<p class="muted">Dán link video ${SRC_LABEL()} vào ô trên rồi bấm <b>Xem</b>, hoặc bấm vào bất kỳ video nào ở tab Thịnh hành.</p>`}
       <div class="fun-watch2">
         <h3>Video liên quan ${S.relatedSource ? `<span class="badge">${escH(SRC[S.relatedSource] ?? S.relatedSource)}</span>` : ""}</h3>
         ${S.related.length ? `<div class="fun-search"><input id="fun-relf" placeholder="Lọc trong danh sách…" value="${escH(S.relatedFilter)}"></div>` : ""}
@@ -264,15 +307,15 @@
       </div>`;
     body.querySelector("#fun-view").onclick = async () => {
       S.urlInput = body.querySelector("#fun-url").value;
-      const { videoId: vid, playlistId: pid } = DM.parseVideoAndPlaylist(S.urlInput);
+      const { videoId: vid, playlistId: pid } = api.parseVideoAndPlaylist(S.urlInput);
       if (vid && pid && vid !== pid) { S.playlistInput = pid; await playPlaylist(pid, vid); return; }
       if (vid && !pid) { openVideo(vid); return; }
       if (pid && !vid) { await playPlaylist(pid); return; }
       if (vid && pid && vid === pid) {
-        try { await DM.videoDetail(vid); openVideo(vid); } catch { await playPlaylist(pid); }
+        try { await api.videoDetail(vid); openVideo(vid); } catch { await playPlaylist(pid); }
         return;
       }
-      S.detailError = "Không nhận diện được link Dailymotion. Hãy dán link video hoặc playlist.";
+      S.detailError = `Không nhận diện được link ${SRC_LABEL()}. Hãy dán link video hoặc playlist.`;
       render();
     };
     body.querySelector("#fun-url").addEventListener("keydown", (e) => { if (e.key === "Enter") body.querySelector("#fun-view").click(); });
@@ -299,9 +342,14 @@
   }
 
   function renderChannel(body) {
+    const api = P();
+    const chPh = S.source === "yt"
+      ? "Nhập channel ID / @handle / URL kênh (vd: UC… hoặc @tenkenh)"
+      : "Nhập tên kênh hoặc URL kênh (vd: LEQUIPE)";
+    const chEx = S.source === "yt" ? "UC_x5XG1OV2P6uZZ5FSM9Ttw hoặc @tenkenh" : "LEQUIPE";
     body.innerHTML = `
       <div class="fun-search">
-        <input id="fun-ch" placeholder="Nhập tên kênh hoặc URL kênh (vd: LEQUIPE)" value="${escH(S.channelInput)}">
+        <input id="fun-ch" placeholder="${chPh}" value="${escH(S.channelInput)}">
         <button class="btn primary" style="width:auto" id="fun-chgo">Tải kênh</button>
       </div>
       ${S.channel ? `<p class="muted">Đang xem kênh: <b>${escH(S.channel)}</b></p>` : ""}
@@ -310,8 +358,8 @@
       <div class="fun-more">${S.loading ? `<p class="muted">Đang tải…</p>` : (S.hasMore ? `<button class="btn" id="fun-more">Xem thêm</button>` : "")}</div>` : ""}`;
     body.querySelector("#fun-chgo").onclick = () => {
       S.channelInput = body.querySelector("#fun-ch").value;
-      const owner = DM.parseOwner(S.channelInput);
-      if (!owner) { S.error = "Tên kênh/URL chưa đúng. Ví dụ: LEQUIPE"; render(); return; }
+      const owner = api.parseOwner(S.channelInput);
+      if (!owner) { S.error = `Tên kênh/URL chưa đúng. Ví dụ: ${chEx}`; render(); return; }
       S.channel = owner; S.tab = "channel";
       loadList(1, { type: "channel", owner });
     };
@@ -322,9 +370,13 @@
   }
 
   function renderPlaylist(body) {
+    const api = P();
+    const plPh = S.source === "yt"
+      ? "Nhập playlist id hoặc URL (vd: PL… hoặc link ?list=…)"
+      : "Nhập playlist id hoặc URL (vd: x85ce2)";
     body.innerHTML = `
       <div class="fun-search">
-        <input id="fun-pl" placeholder="Nhập playlist id hoặc URL (vd: x85ce2)" value="${escH(S.playlistInput)}">
+        <input id="fun-pl" placeholder="${plPh}" value="${escH(S.playlistInput)}">
         <button class="btn primary" style="width:auto" id="fun-plgo">Tải playlist</button>
       </div>
       ${S.playlistMeta ? `<div class="card"><h3 style="margin:0 0 4px">${escH(S.playlistMeta.name)}</h3>
@@ -351,15 +403,15 @@
         ${S.error ? `<p class="err">${escH(S.error)}</p>` : ""}`}`;
     body.querySelector("#fun-plgo").onclick = async () => {
       S.playlistInput = body.querySelector("#fun-pl").value;
-      const id = DM.parsePlaylistId(S.playlistInput) ?? S.playlistInput.trim();
+      const id = api.parsePlaylistId(S.playlistInput) ?? S.playlistInput.trim();
       if (!id) return;
       S.tab = "playlist"; S.loading = true; S.error = ""; render();
       const box = document.querySelector("#fun-body");
       try {
-        const meta = await DM.playlistInfo(id).catch(() => null);
+        const meta = await api.playlistInfo(id).catch(() => null);
         S.playlistMeta = meta ?? { id, name: `Playlist ${id}` };
         S.playlistInput = id;
-        const data = await DM.playlistVideos(id, { page: 1, limit: PAGE });
+        const data = await api.playlistVideos(id, { page: 1, limit: PAGE });
         S.videos = data.list ?? []; S.hasMore = Boolean(data.has_more); S.page = 1;
       } catch (e) { S.error = e.message || "Không tải được playlist."; }
       finally { S.loading = false; render(); }
@@ -380,19 +432,20 @@
     body.querySelectorAll("[data-fun-unsave]").forEach(b => b.onclick = () => toggleSave({ id: b.dataset.funUnsave }));
     // bấm video trong playlist → phát theo hàng đợi
     body.querySelectorAll("[data-fun-open]").forEach(b => b.onclick = () => {
-      if (S.playlistMeta) playPlaylist(S.playlistMeta.id ?? S.playlistInput, DM.parseVideoId(b.dataset.funOpen) || b.dataset.funOpen);
+      if (S.playlistMeta) playPlaylist(S.playlistMeta.id ?? S.playlistInput, api.parseVideoId(b.dataset.funOpen) || b.dataset.funOpen);
       else openVideo(b.dataset.funOpen);
     });
   }
 
   function bindOpen(root) {
+    const api = P();
     // Gắn handler mở video cho các card chưa được gắn riêng (home/channel/watch-related)
     root.querySelectorAll("[data-fun-open]").forEach((b) => {
       if (b.onclick) return;
       b.onclick = () => {
         const id = b.dataset.funOpen;
         if (S.tab === "playlist" && S.playlistMeta) {
-          playPlaylist(S.playlistMeta.id ?? S.playlistInput, DM.parseVideoId(id) || id);
+          playPlaylist(S.playlistMeta.id ?? S.playlistInput, api.parseVideoId(id) || id);
         } else if (S.queue.length > 1) {
           const ix = S.queue.findIndex((x) => x.id === id);
           if (ix >= 0) { playAt(ix); return; }
