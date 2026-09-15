@@ -5,7 +5,7 @@ set -e
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT="$ROOT/ssh_manager"
-VER="${VER:-1.2.4}"
+VER="${VER:-1.2.5}"
 ARCH_DEB="amd64"
 
 mkdir -p "$OUT"
@@ -22,6 +22,39 @@ stage_payload() { # $1 = dest dir
     | tar -xf - -C "$d"
 }
 
+# Vẽ icon PNG 256x256 bằng stdlib (nền tối + cửa sổ terminal xanh).
+# $1 = đường dẫn file PNG đích
+gen_icon() {
+  python3 - "$1" <<'EOF'
+import struct, sys, zlib
+W = H = 256
+px = bytearray()
+for y in range(H):
+    for x in range(W):
+        r = x / (W - 1); rr = int(15 + 30 * r); gg = int(23 + 20 * r); bb = int(42 + 40 * r)
+        in_win = 48 <= x < 208 and 64 <= y < 192
+        title = 48 <= x < 208 and 64 <= y < 92
+        if title: rr, gg, bb = 30, 58, 95
+        elif in_win: rr, gg, bb = 2, 6, 18
+        dot = None
+        for i, dx in enumerate((66, 84, 102)):
+            if (x - dx) ** 2 + (y - 78) ** 2 < 36: dot = [(239, 68, 68), (249, 115, 22), (34, 197, 94)][i]
+        if dot: rr, gg, bb = dot
+        prompt = 66 <= x < 120 and 118 <= y < 126
+        cursor = 128 <= x < 142 and 118 <= y < 140
+        if prompt or cursor: rr, gg, bb = 74, 222, 128
+        px += bytes((rr, gg, bb))
+raw = b"".join(b"\x00" + bytes(px[y * W * 3:(y + 1) * W * 3]) for y in range(H))
+def chunk(t, d):
+    c = t + d
+    return struct.pack(">I", len(d)) + c + struct.pack(">I", zlib.crc32(c) & 0xffffffff)
+ihdr = struct.pack(">IIBBBBB", W, H, 8, 2, 0, 0, 0)
+png = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) + chunk(b"IDAT", zlib.compress(bytes(raw))) + chunk(b"IEND", b"")
+open(sys.argv[1], "wb").write(png)
+print("icon ok")
+EOF
+}
+
 # ============================== .deb ==============================
 build_deb() {
   echo "==> Build .deb..."
@@ -29,7 +62,9 @@ build_deb() {
   rm -rf "$pkg"
   mkdir -p "$pkg/DEBIAN" "$pkg/opt/lan-ssh-manager" \
            "$pkg/usr/bin" "$pkg/etc/lan-ssh-manager" \
-           "$pkg/lib/systemd/system"
+           "$pkg/lib/systemd/system" \
+           "$pkg/usr/share/applications" \
+           "$pkg/usr/share/icons/hicolor/256x256/apps"
 
   stage_payload "$pkg/opt/lan-ssh-manager"
 
@@ -61,16 +96,33 @@ if [ ! -x "$APP/venv/bin/python" ]; then
   python3 -m venv "$APP/venv"
 fi
 "$APP/venv/bin/pip" install -q -r "$APP/backend/requirements.txt"
+# dpkg KHONG tu tao lai conffile da bi xoa khi cai de -> tu khoi phuc
+if [ ! -f /etc/lan-ssh-manager/.env ]; then
+  cp "$APP/.env.example" /etc/lan-ssh-manager/.env
+fi
 chmod 600 /etc/lan-ssh-manager/.env || true
+if command -v update-desktop-database >/dev/null 2>&1; then
+  update-desktop-database /usr/share/applications >/dev/null 2>&1 || true
+fi
+if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+  gtk-update-icon-cache -f -t /usr/share/icons/hicolor >/dev/null 2>&1 || true
+fi
 if command -v systemctl >/dev/null 2>&1; then
   systemctl daemon-reload || true
+  systemctl enable lan-ssh-manager || true
+  if [ -d /run/systemd/system ]; then
+    if systemctl is-active --quiet lan-ssh-manager 2>/dev/null; then
+      systemctl restart lan-ssh-manager || true
+    else
+      systemctl start lan-ssh-manager || true
+    fi
+  fi
 fi
 echo "------------------------------------------------------------------"
-echo " lan-ssh-manager da cai xong."
-echo " 1) Sua cau hinh:  sudo nano /etc/lan-ssh-manager/.env"
-echo "    (doi APP_SECRET_KEY, APP_ENCRYPTION_KEY, ADMIN_PASSWORD)"
-echo " 2) Chay service:  sudo systemctl enable --now lan-ssh-manager"
-echo "    Mo: http://<LAN-IP>:8000"
+echo " lan-ssh-manager da cai xong va service da duoc bat (enable + start)."
+echo " Mo Show Apps (Super) gõ 'LAN SSH Manager' de dieu khien,"
+echo " hoac mo web: http://<LAN-IP>:8000  (admin/admin123 lan dau)"
+echo " Sua cau hinh: sudo nano /etc/lan-ssh-manager/.env"
 echo "------------------------------------------------------------------"
 EOF
   cat > "$pkg/DEBIAN/prerm" <<'EOF'
@@ -96,6 +148,22 @@ EOF
   # sshman: menu Start/Stop/Restart/Status/Logs (tự nhận chế độ deb khi ở /usr/bin)
   cp "$ROOT/scripts/sshman.sh" "$pkg/usr/bin/sshman"
   chmod 755 "$pkg/usr/bin/sshman"
+
+  # Hiện trong Show Apps (GNOME): mở menu sshman trong terminal
+  # (Start/Stop/Restart service, Status, Logs, Mở Web).
+  gen_icon "$pkg/usr/share/icons/hicolor/256x256/apps/lan-ssh-manager.png"
+  cat > "$pkg/usr/share/applications/lan-ssh-manager.desktop" <<'EOF'
+[Desktop Entry]
+Name=LAN SSH Manager
+Comment=Quan ly may LAN qua SSH (khong can agent)
+Exec=/usr/bin/sshman
+Icon=lan-ssh-manager
+Categories=Network;
+Terminal=true
+Type=Application
+StartupNotify=false
+Keywords=ssh;lan;server;manager;
+EOF
 
   # systemd service (DynamicUser: khong can tao user tay)
   # Serial console can cham /dev/ttyUSB*... nen mo PrivateDevices + nhom dialout.
@@ -145,34 +213,7 @@ build_appimage() {
     -r "$ROOT/backend/requirements.txt"
 
   # icon PNG 256x256 (ve bang stdlib: nen toi + cua so terminal xanh)
-  python3 - "$work/AppDir/lan-ssh-manager.png" <<'EOF'
-import struct, sys, zlib
-W = H = 256
-px = bytearray()
-for y in range(H):
-    for x in range(W):
-        r = x / (W - 1); rr = int(15 + 30 * r); gg = int(23 + 20 * r); bb = int(42 + 40 * r)
-        in_win = 48 <= x < 208 and 64 <= y < 192
-        title = 48 <= x < 208 and 64 <= y < 92
-        if title: rr, gg, bb = 30, 58, 95
-        elif in_win: rr, gg, bb = 2, 6, 18
-        dot = None
-        for i, dx in enumerate((66, 84, 102)):
-            if (x - dx) ** 2 + (y - 78) ** 2 < 36: dot = [(239, 68, 68), (249, 115, 22), (34, 197, 94)][i]
-        if dot: rr, gg, bb = dot
-        prompt = 66 <= x < 120 and 118 <= y < 126
-        cursor = 128 <= x < 142 and 118 <= y < 140
-        if prompt or cursor: rr, gg, bb = 74, 222, 128
-        px += bytes((rr, gg, bb))
-raw = b"".join(b"\x00" + bytes(px[y * W * 3:(y + 1) * W * 3]) for y in range(H))
-def chunk(t, d):
-    c = t + d
-    return struct.pack(">I", len(d)) + c + struct.pack(">I", zlib.crc32(c) & 0xffffffff)
-ihdr = struct.pack(">IIBBBBB", W, H, 8, 2, 0, 0, 0)
-png = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) + chunk(b"IDAT", zlib.compress(bytes(raw))) + chunk(b"IEND", b"")
-open(sys.argv[1], "wb").write(png)
-print("icon ok")
-EOF
+  gen_icon "$work/AppDir/lan-ssh-manager.png"
 
   cat > "$work/AppDir/lan-ssh-manager.desktop" <<'EOF'
 [Desktop Entry]

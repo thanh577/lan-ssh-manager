@@ -3,6 +3,19 @@
 > Quy ước: mỗi lần sửa app (tính năng, fix bug, đổi config mặc định) đều ghi thêm
 > mục mới **lên đầu** file này, ghi ngày + nội dung + file liên quan.
 
+## 2026-09-15 — Đóng gói 1.2.5 + favicon
+
+- `scripts/package.sh`: VER mặc định `1.2.4 → 1.2.5`; vẽ icon PNG 256x256 bằng
+  stdlib (`gen_icon`, không cần asset ngoài); thêm `.desktop` + icon vào
+  `Show Apps`; `postinst` tự khôi phục `/etc/lan-ssh-manager/.env` nếu conffile
+  bị xóa (dpkg không tự tạo lại).
+- `frontend/index.html`: thêm favicon inline (SVG data URI 🖥️), hết 404
+  `/favicon.ico`.
+- Verify: `bash -n` OK, build ra `lan-ssh-manager_1.2.5_amd64.deb` +
+  `LAN-SSH-Manager-1.2.5-x86_64.AppImage`, `apt install` + service health +
+  login OK. File `.deb`/`.AppImage` không push lên git (gitignore, up qua
+  GitHub Releases khi cần).
+
 ## 2026-09-09 — Batch B RAM-DoS + font/zoom terminal + sshman hiểu systemd
 
 - Batch B (`backend/app/api/files.py`): upload 1-request spool qua
