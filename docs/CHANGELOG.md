@@ -3,6 +3,21 @@
 > Quy ước: mỗi lần sửa app (tính năng, fix bug, đổi config mặc định) đều ghi thêm
 > mục mới **lên đầu** file này, ghi ngày + nội dung + file liên quan.
 
+## 2026-09-15 — Giải trí: phát nền khi chuyển tab + tìm kiếm ở tab Xem
+
+- Tab Xem (`frontend/entertainment.js` `renderWatch`): thêm ô tìm kiếm toàn cục
+  (trước đây chỉ có ở tab Thịnh hành) — dùng chung cho cả Dailymotion lẫn
+  YouTube, kết quả dạng lưới + Xem thêm phân trang.
+- Phát nền: chuyển sang tab khác (Máy, Lệnh, Tệp tin...) không dừng video nữa.
+  Rời view Giải trí thì iframe player được tách ra khung mini nổi góc phải dưới
+  (cùng document nên không reload, phát tiếp); quay lại tab Xem thì gắn vào lại
+  đúng node cũ. Mini có nút Mở lại / Tắt. Tự chuyển bài playlist (autoNext) vẫn
+  chạy ở nền; render nền không ghi đè view khác, không cuộn trang của user.
+- `frontend/app.js`: `show()` + `openMachine()` gọi hook `window._funDetach()`
+  trước khi thay `#content`. Style mini trong `frontend/entertainment.css`.
+- Verify: `node --check` OK; test jsdom 12 case PASS (render, detach giữ nguyên
+  node iframe, quay lại gắn lại, autoNext nền đổi bài trong mini, Tắt dọn sạch).
+
 ## 2026-09-15 — Đóng gói 1.2.5 + favicon
 
 - `scripts/package.sh`: VER mặc định `1.2.4 → 1.2.5`; vẽ icon PNG 256x256 bằng

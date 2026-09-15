@@ -24,6 +24,7 @@
 
   function switchSource(src) {
     if (S.source === src) return;
+    stopMini();
     S.source = src;
     try { localStorage.setItem(SRC_KEY, src); } catch {}
     S.tab = "home"; S.query = ""; S.videos = []; S.page = 1; S.hasMore = false; S.total = 0; S.error = "";
@@ -46,7 +47,7 @@
   // ---- data loaders ----
   async function loadList(nextPage, mode, reset = true) {
     const api = P();
-    S.loading = true; S.error = ""; render();
+    S.loading = true; S.error = ""; rerender();
     try {
       let data;
       if (mode?.type === "channel") data = await api.userVideos(mode.owner, { page: nextPage, limit: PAGE, sort: "recent" });
@@ -58,7 +59,7 @@
       S.total = data.total ?? 0;
       S.page = nextPage;
     } catch (e) { S.error = e.message || "Không tải được dữ liệu."; }
-    finally { S.loading = false; render(); }
+    finally { S.loading = false; rerender(); }
   }
 
   async function openVideo(id, opts = {}) {
@@ -71,8 +72,8 @@
     S.relatedSource = ""; S.relatedFilter = ""; S.detailError = ""; S.relLoading = true;
     if (!keepQueue && !playlistId) { S.queue = []; S.queueIndex = -1; S.queueMeta = null; S.relatedPlaylistId = null; }
     if (playlistId) S.relatedPlaylistId = playlistId;
-    render();
-    try { document.querySelector("#content")?.scrollTo?.({ top: 0 }); } catch {}
+    rerender();
+    if (inFunView()) { try { document.querySelector("#content")?.scrollTo?.({ top: 0 }); } catch {} }
     try {
       const [d, r, p, meta] = await Promise.all([
         api.videoDetail(vid),
@@ -112,7 +113,7 @@
         }
       }
     } catch (e) { S.detailError = e.message || "Không tải được thông tin video."; }
-    finally { S.relLoading = false; render(); }
+    finally { S.relLoading = false; rerender(); }
   }
 
   async function playPlaylist(pid, startVid = null) {
@@ -120,7 +121,7 @@
     const id = api.parsePlaylistId(pid) ?? pid;
     if (!id) return;
     S.tab = "watch"; S.queueLoading = true; S.detailError = ""; S.playlistInput = id;
-    render();
+    rerender();
     try {
       const [meta, all] = await Promise.all([
         api.playlistInfo(id).catch(() => null),
@@ -132,13 +133,13 @@
       S.relatedPlaylistId = id;
       const si = startVid ? all.findIndex((v) => v.id === startVid) : 0;
       S.queueIndex = si >= 0 ? si : 0;
-      S.queueLoading = false; render();
+      S.queueLoading = false; rerender();
       await openVideo(all[S.queueIndex].id, { playlistId: id, keepQueue: true });
       S.queue = all; S.related = all; S.relatedSource = "playlist";
       if (meta) S.queueMeta = meta;
-      render();
+      rerender();
     } catch (e) { S.detailError = e.message || "Không tải được playlist."; }
-    finally { S.queueLoading = false; render(); }
+    finally { S.queueLoading = false; rerender(); }
   }
 
   function playAt(idx) {
@@ -162,7 +163,7 @@
   // Tìm kiếm toàn cục trong tab Xem video (cả DM lẫn YT)
   async function doWatchSearch(page, reset = true) {
     const api = P();
-    S.wqLoading = true; S.wqError = ""; S.wqSearched = true; render();
+    S.wqLoading = true; S.wqError = ""; S.wqSearched = true; rerender();
     try {
       const data = await api.searchVideos({ query: S.wq, page, limit: PAGE, sort: "relevance" });
       const list = data.list ?? [];
@@ -170,7 +171,7 @@
       S.wqHasMore = Boolean(data.has_more);
       S.wqPage = page;
     } catch (e) { S.wqError = e.message || "Không tìm kiếm được."; }
-    finally { S.wqLoading = false; render(); }
+    finally { S.wqLoading = false; rerender(); }
   }
 
   // Tự phát tiếp khi player báo hết video (DM + YouTube)
@@ -202,9 +203,66 @@
       ? api.removeSaved(S.saved, id)
       : api.upsertSaved(S.saved, meta);
     api.persistSaved(S.saved);
-    render();
+    rerender();
   }
   const isSaved = (id) => (id != null) && S.saved.some((x) => String(x.id) === String(id));
+
+  // ---- phát nền: giữ player sống khi rời view ----
+  // iframe nằm trong #content nên chuyển tab là bị hủy. Khi rời đi, tách iframe
+  // ra khung mini ngoài #content (cùng document nên không reload, phát tiếp);
+  // quay lại tab Xem thì gắn trở vào. Tự chuyển bài (autoNext) vẫn chạy ở nền.
+  const inFunView = () => !!document.querySelector("#fun-body");
+  function rerender() { if (inFunView()) render(); else syncMini(); }
+  function miniEl() {
+    let h = document.querySelector("#fun-mini");
+    if (!h) {
+      h = document.createElement("div");
+      h.id = "fun-mini";
+      h.style.display = "none";
+      h.innerHTML = `<div class="fun-mini-head"><b id="fun-mini-title">Đang phát</b>
+        <span><button class="btn small" id="fun-mini-open">Mở lại</button>
+        <button class="btn small danger" id="fun-mini-close">Tắt</button></span></div>
+        <div id="fun-mini-slot"></div>`;
+      document.body.appendChild(h);
+      h.querySelector("#fun-mini-open").onclick = () => { S.tab = "watch"; try { show("fun"); } catch {} };
+      h.querySelector("#fun-mini-close").onclick = () => { stopMini(); if (inFunView()) render(); };
+    }
+    return h;
+  }
+  function stopMini() {
+    const h = document.querySelector("#fun-mini");
+    if (h) { h.querySelector("#fun-mini-slot").innerHTML = ""; h.style.display = "none"; }
+    S.currentId = null; S.detail = null;
+  }
+  function syncMini() {
+    const h = miniEl();
+    if (!S.currentId) { const f0 = h.querySelector("#fun-mini-slot iframe"); if (f0) f0.remove(); h.style.display = "none"; return; }
+    const api = P();
+    let f = h.querySelector("#fun-mini-slot iframe[data-fun-player]");
+    if (!(f && f.dataset.funPlayer === String(S.currentId))) {
+      if (f) f.remove();
+      f = document.createElement("iframe");
+      f.dataset.funPlayer = String(S.currentId);
+      f.src = api.embedUrl(S.currentId, { autoplay: true, playlistId: S.queue.length > 1 ? S.relatedPlaylistId : null });
+      f.setAttribute("allow", "autoplay; fullscreen; picture-in-picture; web-share");
+      f.setAttribute("allowfullscreen", "");
+      f.setAttribute("frameborder", "0");
+      h.querySelector("#fun-mini-slot").appendChild(f);
+    }
+    h.querySelector("#fun-mini-title").textContent = S.detail?.title || ("Đang phát • " + SRC_LABEL());
+    h.style.display = "block";
+  }
+  // app.js gọi trước khi thay #content (show/openMachine): tách player ra mini
+  window._funDetach = function () {
+    try {
+      if (!S.currentId) return;
+      const f = document.querySelector("#fun-body iframe[data-fun-player]");
+      const h = miniEl();
+      if (f) h.querySelector("#fun-mini-slot").appendChild(f);
+      h.querySelector("#fun-mini-title").textContent = S.detail?.title || ("Đang phát • " + SRC_LABEL());
+      if (h.querySelector("#fun-mini-slot iframe")) h.style.display = "block";
+    } catch {}
+  };
 
   // ---- render ----
   function cardHtml(v) {
@@ -234,6 +292,7 @@
     c.innerHTML = h;
     c.querySelectorAll("[data-funsrc]").forEach(b => b.onclick = () => switchSource(b.dataset.funsrc));
     c.querySelectorAll("[data-funtab]").forEach(b => b.onclick = () => {
+      if (S.tab === "watch" && b.dataset.funtab !== "watch") window._funDetach();
       S.tab = b.dataset.funtab;
       if (S.tab === "home" && !S.videos.length && !S.query) loadList(1, undefined);
       render();
@@ -310,7 +369,7 @@
           <button class="btn small" id="fun-saveq">${isSaved(S.relatedPlaylistId) ? "★ Đã lưu" : "☆ Lưu playlist"}</button>
           <button class="btn small" id="fun-exitq">Thoát playlist</button>
         </div></div>` : ""}
-      ${S.currentId ? `<div class="fun-player"><iframe src="${escH(api.embedUrl(S.currentId, { autoplay: true, playlistId: q.length > 1 ? S.relatedPlaylistId : null }))}"
+      ${S.currentId ? `<div class="fun-player" id="fun-player-slot"><iframe data-fun-player="${escH(S.currentId)}" src="${escH(api.embedUrl(S.currentId, { autoplay: true, playlistId: q.length > 1 ? S.relatedPlaylistId : null }))}"
         allow="autoplay; fullscreen; picture-in-picture; web-share" allowfullscreen frameborder="0" title="${SRC_LABEL()} player"></iframe></div>
         ${S.detail ? `<div class="card" style="margin-top:10px"><h3 style="margin:0 0 6px">${escH(S.detail.title)}</h3>
           <p class="muted">${escH(S.detail["owner.screenname"] ?? "")} • ${escH(fmtViews(S.detail.views_total))} lượt xem • ${escH(fmtDate(S.detail.created_time))} • ${escH(fmtDur(S.detail.duration))}</p>
@@ -345,6 +404,17 @@
       render();
     };
     body.querySelector("#fun-url").addEventListener("keydown", (e) => { if (e.key === "Enter") body.querySelector("#fun-view").click(); });
+    // Đang phát ở mini (đi tab khác về): gắn iframe cũ vào lại, không reload
+    try {
+      const slot = body.querySelector("#fun-player-slot");
+      const stashed = document.querySelector("#fun-mini-slot iframe[data-fun-player]");
+      if (slot && S.currentId) {
+        if (stashed && stashed.dataset.funPlayer === String(S.currentId)) {
+          slot.innerHTML = ""; slot.appendChild(stashed);
+          const mh = document.querySelector("#fun-mini"); if (mh) mh.style.display = "none";
+        } else if (stashed) { stashed.remove(); }
+      }
+    } catch {}
     body.querySelector("#fun-wgo").onclick = () => {
       S.wq = body.querySelector("#fun-wq").value.trim();
       if (!S.wq) return;

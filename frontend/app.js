@@ -54,6 +54,7 @@ async function loadSidebar() {
 
 // ---------- views ----------
 async function show(view) {
+  try { if (typeof window._funDetach === "function") window._funDetach(); } catch {}
   document.querySelectorAll(".nav button").forEach(b => b.classList.toggle("active", b.dataset.view === view));
   try { $("#content").classList.remove("wide"); } catch {}
   const c = $("#content");
@@ -143,6 +144,7 @@ window.testSSH = async (id, btn) => {
 
 // ---------- machine detail ----------
 window.openMachine = async (id) => {
+  try { if (typeof window._funDetach === "function") window._funDetach(); } catch {}
   state.cur = id; state.curTab = "overview";
   document.querySelectorAll(".side-item").forEach(el => el.classList.toggle("active", +el.dataset.id === id));
   renderMachineShell();
