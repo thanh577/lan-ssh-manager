@@ -10,6 +10,7 @@
     videos: [], page: 1, hasMore: false, total: 0, loading: false, error: "",
     urlInput: "", currentId: null, detail: null, related: [], relatedSource: "",
     relatedPlaylistId: null, relatedFilter: "", detailError: "", relLoading: false,
+    wq: "", wqList: [], wqPage: 1, wqHasMore: false, wqLoading: false, wqError: "", wqSearched: false,
     queue: [], queueIndex: -1, queueMeta: null, queueLoading: false,
     autoNext: true, loopList: true,
     channelInput: "", channel: "", playlistInput: "", playlistMeta: null,
@@ -27,6 +28,7 @@
     try { localStorage.setItem(SRC_KEY, src); } catch {}
     S.tab = "home"; S.query = ""; S.videos = []; S.page = 1; S.hasMore = false; S.total = 0; S.error = "";
     S.currentId = null; S.detail = null; S.related = []; S.relatedSource = ""; S.relatedPlaylistId = null;
+    S.wq = ""; S.wqList = []; S.wqPage = 1; S.wqHasMore = false; S.wqError = ""; S.wqSearched = false;
     S.queue = []; S.queueIndex = -1; S.queueMeta = null;
     S.channel = ""; S.channelInput = ""; S.playlistMeta = null; S.playlistInput = ""; S.urlInput = "";
     try { S.saved = P().loadSaved(); } catch { S.saved = []; }
@@ -157,6 +159,20 @@
     playAt(p);
   }
 
+  // Tìm kiếm toàn cục trong tab Xem video (cả DM lẫn YT)
+  async function doWatchSearch(page, reset = true) {
+    const api = P();
+    S.wqLoading = true; S.wqError = ""; S.wqSearched = true; render();
+    try {
+      const data = await api.searchVideos({ query: S.wq, page, limit: PAGE, sort: "relevance" });
+      const list = data.list ?? [];
+      S.wqList = reset ? list : [...S.wqList, ...list];
+      S.wqHasMore = Boolean(data.has_more);
+      S.wqPage = page;
+    } catch (e) { S.wqError = e.message || "Không tìm kiếm được."; }
+    finally { S.wqLoading = false; render(); }
+  }
+
   // Tự phát tiếp khi player báo hết video (DM + YouTube)
   if (!window._funMsgHook) {
     window._funMsgHook = true;
@@ -272,6 +288,16 @@
         <input id="fun-url" placeholder="${urlPh}" value="${escH(S.urlInput)}">
         <button class="btn primary" style="width:auto" id="fun-view">Xem</button>
       </div>
+      <div class="fun-search">
+        <input id="fun-wq" placeholder="Tìm kiếm video ${SRC_LABEL()}… (vd: bóng đá, nhạc, phim)" value="${escH(S.wq)}">
+        <button class="btn primary" style="width:auto" id="fun-wgo">Tìm kiếm</button>
+      </div>
+      ${S.wqError ? `<p class="err">${escH(S.wqError)}</p>` : ""}
+      ${S.wqLoading ? `<p class="muted">Đang tìm…</p>`
+      : S.wqSearched ? (S.wqList.length
+        ? `<h3>Kết quả cho “${escH(S.wq)}”</h3><div class="fun-grid">${S.wqList.map(cardHtml).join("")}</div>
+           <div class="fun-more">${S.wqHasMore ? `<button class="btn" id="fun-wmore">Xem thêm</button>` : ""}</div>`
+        : `<p class="muted">Không tìm thấy video nào.</p>`) : ""}
       ${S.detailError ? `<p class="err">${escH(S.detailError)}</p>` : ""}
       ${S.queueLoading ? `<p class="muted">Đang tải playlist…</p>` : ""}
       ${q.length > 1 ? `<div class="fun-queue"><b>${escH(S.queueMeta?.name ?? ("Playlist " + (S.relatedPlaylistId ?? "")))}</b>
@@ -319,6 +345,14 @@
       render();
     };
     body.querySelector("#fun-url").addEventListener("keydown", (e) => { if (e.key === "Enter") body.querySelector("#fun-view").click(); });
+    body.querySelector("#fun-wgo").onclick = () => {
+      S.wq = body.querySelector("#fun-wq").value.trim();
+      if (!S.wq) return;
+      doWatchSearch(1, true);
+    };
+    body.querySelector("#fun-wq").addEventListener("keydown", (e) => { if (e.key === "Enter") body.querySelector("#fun-wgo").click(); });
+    const wm = body.querySelector("#fun-wmore");
+    if (wm) wm.onclick = () => doWatchSearch(S.wqPage + 1, false);
     const pv = body.querySelector("#fun-prev"), nx = body.querySelector("#fun-next");
     if (pv) pv.onclick = playPrev;
     if (nx) nx.onclick = playNext;
