@@ -31,6 +31,39 @@
   login OK. File `.deb`/`.AppImage` không push lên git (gitignore, up qua
   GitHub Releases khi cần).
 
+## 2026-09-11 — Exe Windows chạy OK + YouTube ở tab Giải trí
+
+- Fix exe windowed (user báo: bản debug chạy, bản windowed
+  `Unable to configure formatter 'default'`):
+  `users_api.py` bỏ `import crypt` (Unix-only) → `passlib` sha512_crypt
+  (thuần Python, cùng hash `$6$`, verify tương thích ngược) + thêm
+  `passlib>=1.7.4` vào `backend/requirements.txt`; `app_win.py` ép
+  stdout/stderr UTF-8 (fix `UnicodeEncodeError` console cp1252);
+  UI thread-safe (health-check nền qua `after`, worker không đụng Tk trực
+  tiếp — fix treo/chậm); dummy stdio khi không console (gốc lỗi formatter:
+  uvicorn gọi `sys.stdout.isatty()` lúc `Config.__init__`, đã repro local).
+- Verify: repro lỗi + SIM-WINDOWED-PASS + SELFTEST-PASS; user xác nhận exe
+  chạy OK → gỡ bản debug khỏi workflow (`7c16939`, chỉ giữ bản windowed).
+- YouTube ở tab Giải trí (`backend/app/api/youtube.py` ~557 dòng,
+  `frontend/youtube.js`, `main.py`, `entertainment.js`): cùng cấu trúc với
+  Dailymotion.
+
+## 2026-09-10 — Lên GitHub + menu Windows + exe độc lập
+
+- `git init` + `.gitignore` chặn secret/binary/venv/db/log (`ssh_manager/*.exe`,
+  `build/`, `dist/`, `*.spec`); push repo `thanh577/lan-ssh-manager` nhánh
+  `main`. Token cần scope `repo` + `workflow`; lưu credential bằng
+  `git config --global credential.helper store`.
+- `scripts/sshman.ps1` + `sshman.bat`: menu Start/Stop/Restart/Status/Logs
+  cho Windows (không có systemd).
+- `gui/app_win.py`: panel tkinter Khởi động/Dừng/Làm mới/Mở Web/Ẩn/Thoát +
+  log + copy log + `panel.log`, server uvicorn chạy trong exe (thread),
+  DATA `%LOCALAPPDATA%\lan-ssh-manager`. `scripts/build_exe.bat` (PyInstaller
+  onefile) nhưng không build chéo từ Linux được → chuyển sang build bằng
+  GitHub Actions.
+- `.github/workflows/build-exe.yml`: chạy trên `windows-latest`, test headless
+  (start → health → stop) trước rồi build exe, tải ở tab Actions → Artifacts.
+
 ## 2026-09-09 — Batch B RAM-DoS + font/zoom terminal + sshman hiểu systemd
 
 - Batch B (`backend/app/api/files.py`): upload 1-request spool qua
