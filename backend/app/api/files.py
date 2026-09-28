@@ -1,6 +1,6 @@
 import tempfile
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Request
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import PlainTextResponse, StreamingResponse
 from sqlalchemy.orm import Session
 from ..db.database import get_db
 from ..models.machine import Machine
@@ -261,3 +261,42 @@ async def upload_complete(mid: int, body: dict, db: Session = Depends(get_db),
         raise HTTPException(409, f"Tệp chưa đủ (có {cur}/{total} bytes) — hãy resume")
     audit(db, user.id, m.id, "FILE_UPLOAD", remote_path[:500], "success", f"{cur} bytes (chunked)")
     return ok({"remote_path": remote_path, "size": cur}, f"Đã tải lên xong {cur} bytes")
+
+
+@router.get("/{mid}/files/download")
+async def files_download(mid: int, path: str, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    """Tải file từ máy đích về trình duyệt (streaming qua SFTP)."""
+    m = db.query(Machine).filter(Machine.id == mid).first()
+    if not m:
+        raise HTTPException(404, "Không tìm thấy máy")
+    _check_remote_path(path)
+    kw = build_connect_kwargs(m)
+    try:
+        async with asyncssh.connect(**kw) as conn:
+            async with conn.start_sftp_client() as sftp:
+                try:
+                    attrs = await sftp.stat(path)
+                except (FileNotFoundError, asyncssh.SFTPNoSuchFile):
+                    raise HTTPException(404, "Tệp không tồn tại")
+                if not attrs or (attrs.permissions & 0o170000) != 0o100000:
+                    raise HTTPException(400, "Đường dẫn không phải là file thường")
+                
+                async def file_stream():
+                    async with sftp.open(path, "rb") as rf:
+                        while True:
+                            chunk = await rf.read(8 * 1024 * 1024)  # 8MB chunks
+                            if not chunk:
+                                break
+                            yield chunk
+                
+                filename = path.split("/")[-1] or "download"
+                audit(db, user.id, m.id, "FILE_DOWNLOAD", path[:500], "success", f"{attrs.size} bytes")
+                return StreamingResponse(
+                    file_stream(),
+                    media_type="application/octet-stream",
+                    headers={"Content-Disposition": f'attachment; filename="{filename}"', "Content-Length": str(attrs.size)}
+                )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(getattr(e, "code", 502), str(e))

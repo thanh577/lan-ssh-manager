@@ -243,8 +243,9 @@ window.listFiles = async () => {
   try {
     const d = await api(`/api/machines/${state.cur}/files?path=${encodeURIComponent(p)}`);
     window._flist = d.entries; window._fbase = p;
-    $("#f-list").innerHTML = d.entries.map((e, i) => `<div class="file-row"><span>${e.is_dir ? "📁" : "📄"} ${esc(e.name)} <span class="muted">${e.is_dir ? "" : (e.size + "B")} ${esc(e.permissions || "")}</span></span>
+    $("#f-list").innerHTML = d.entries.map((e, i) => `<div class="file-row" ondblclick="fileDblClick(${i})"><span>${e.is_dir ? "📁" : "📄"} ${esc(e.name)} <span class="muted">${e.is_dir ? "" : (e.size + "B")} ${esc(e.permissions || "")}</span></span>
       <span><button class="btn small" data-fact="open" data-i="${i}">Mở</button>
+      ${!e.is_dir ? `<button class="btn small" data-fact="download" data-i="${i}">Tải về</button>` : ""}
       <button class="btn small" data-fact="rename" data-i="${i}">Đổi tên</button>
       <button class="btn small danger" data-fact="del" data-i="${i}">Xóa</button></span></div>`).join("") || "(trống)";
     $("#f-list").querySelectorAll("button[data-fact]").forEach(b => b.onclick = () => {
@@ -252,12 +253,23 @@ window.listFiles = async () => {
       const base = window._fbase || p;
       const full = base.replace(/\/$/, "") + "/" + e.name;
       if (b.dataset.fact === "open") fileGo(base, e.name, e.is_dir);
+      else if (b.dataset.fact === "download") downloadFile(full);
       else if (b.dataset.fact === "rename") fileRename(full);
       else if (b.dataset.fact === "del") fileDel(full);
     });
   } catch (e) { $("#f-list").innerHTML = `<span class="err">${esc(e.message)}</span>`; }
 };
 window.fileGo = (base, name, isDir) => { const p = base.replace(/\/$/, "") + "/" + name; if (isDir) { $("#f-path").value = p; listFiles(); } else { $("#f-edit-path").value = p; readFile(); } };
+window.fileDblClick = (i) => { const e = (window._flist || [])[i]; if (!e || !e.is_dir) return; const base = window._fbase || $("#f-path").value || "/tmp"; const p = base.replace(/\/$/, "") + "/" + e.name; $("#f-path").value = p; listFiles(); };
+window.downloadFile = (path) => {
+  const url = `/api/machines/${state.cur}/files/download?path=${encodeURIComponent(path)}&token=${encodeURIComponent(state.token)}`;
+  const a = document.createElement("a");
+  a.href = url;
+  a.style.display = "none";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+};
 window.fileDel = async (p) => { if (!confirm("Xóa " + p + "?")) return; await api(`/api/machines/${state.cur}/files/action`, { method: "POST", body: JSON.stringify({ action: "delete", path: p }) }); toast("Đã xóa"); listFiles(); };
 window.fileRename = async (p) => { const np = prompt("Tên mới (đường dẫn đầy đủ):", p); if (!np) return; await api(`/api/machines/${state.cur}/files/action`, { method: "POST", body: JSON.stringify({ action: "rename", path: p, new_path: np }) }); toast("Đã đổi tên"); listFiles(); };
 window.mkDir = async () => { const m = state.machines.find(x => x.id === state.cur); const home = m ? (m.username === "root" ? "/root" : `/home/${m.username}`) : "/tmp"; const n = prompt("Đường dẫn thư mục mới:", ($("#f-path").value || home) + "/newdir"); if (!n) return; await api(`/api/machines/${state.cur}/files/action`, { method: "POST", body: JSON.stringify({ action: "mkdir", path: n }) }); toast("Đã tạo"); listFiles(); };
