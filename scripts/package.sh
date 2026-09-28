@@ -203,14 +203,13 @@ build_appimage() {
   echo "==> Build AppImage..."
   local work=/tmp/lsm-appimage
   rm -rf "$work"
-  mkdir -p "$work/AppDir/usr/share/lan-ssh-manager" "$work/AppDir/usr/lib/pythonlibs"
+  mkdir -p "$work/AppDir/usr/share/lan-ssh-manager"
 
   stage_payload "$work/AppDir/usr/share/lan-ssh-manager"
 
-  echo "==> pip install --target (can mang)..."
-  python3 -m pip install -q --break-system-packages \
-    --target "$work/AppDir/usr/lib/pythonlibs" \
-    -r "$ROOT/backend/requirements.txt"
+  echo "==> Tạo virtual environment bên trong AppDir..."
+  python3 -m venv "$work/AppDir/venv"
+  "$work/AppDir/venv/bin/pip" install -q -r "$ROOT/backend/requirements.txt"
 
   # icon PNG 256x256 (ve bang stdlib: nen toi + cua so terminal xanh)
   gen_icon "$work/AppDir/lan-ssh-manager.png"
@@ -234,7 +233,7 @@ EOF
 #    (Start/Stop/Restart server, trạng thái, Mở Web, Ẩn, Thoát + log).
 #  - Không màn hình: chạy server + tự mở trình duyệt như cũ. Ctrl+C để dừng.
 HERE="$(dirname "$(readlink -f "$0")")"
-export PYTHONPATH="$HERE/usr/lib/pythonlibs:$HERE/usr/share/lan-ssh-manager"
+export PYTHONPATH="$HERE/usr/share/lan-ssh-manager"
 DATA="${LAN_SSH_DATA:-$HOME/.local/share/lan-ssh-manager}"
 mkdir -p "$DATA"
 export LAN_SSH_DATA="$DATA"
@@ -242,15 +241,16 @@ export DATABASE_URL="sqlite:///$DATA/lan_ssh_manager.db"
 PORT="${PORT:-8000}"
 export PORT
 GUI="$HERE/usr/share/lan-ssh-manager/gui/control.py"
+VENV_PY="$HERE/venv/bin/python"
 if { [ -n "$DISPLAY" ] || [ -n "$WAYLAND_DISPLAY" ]; } && [ -f "$GUI" ] \
-   && python3 -c "import tkinter" 2>/dev/null; then
+   && "$VENV_PY" -c "import tkinter" 2>/dev/null; then
   echo "==> Mở panel điều khiển LAN SSH Manager..."
-  exec python3 "$GUI"
+  exec "$VENV_PY" "$GUI"
 fi
 echo "==> Không có màn hình/tkinter — chạy headless (log vẫn hiện ở terminal)."
 cd "$DATA"
 echo "==> LAN SSH Manager (AppImage) — data: $DATA"
-python3 -m uvicorn backend.app.main:app --host 0.0.0.0 --port "$PORT" &
+"$VENV_PY" -m uvicorn backend.app.main:app --host 0.0.0.0 --port "$PORT" &
 SRV=$!
 cleanup() { kill "$SRV" 2>/dev/null; wait "$SRV" 2>/dev/null; }
 trap cleanup INT TERM
@@ -295,4 +295,4 @@ clean_old() {
 }
 clean_old
 echo "==> TAT CA XONG. File trong $OUT:"
-rtk ls -la "$OUT"
+ls -la "$OUT"
