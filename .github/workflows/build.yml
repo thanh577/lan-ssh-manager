@@ -29,6 +29,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y dpkg-dev python3 python3-venv python3-pip curl
 
+      - name: Verify script
+        run: |
+          ls -la scripts/package.sh
+          head -5 scripts/package.sh
+
       - name: Build .deb package
         run: |
           chmod +x scripts/package.sh
@@ -59,6 +64,11 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y python3 python3-venv python3-pip curl file fuse libfuse2
+
+      - name: Verify script
+        run: |
+          ls -la scripts/package.sh
+          head -5 scripts/package.sh
 
       - name: Build AppImage
         run: |
