@@ -54,7 +54,7 @@ pre.out{background:#020617;border:1px solid #334155;border-radius:8px;padding:12
 .tabs{display:flex;gap:8px;margin:12px 0;flex-wrap:wrap}.tabs button{background:#1e293b;color:#cbd5e1;border:0;padding:8px 14px;border-radius:8px;cursor:pointer}
 .tabs button.active{background:#2563eb;color:#fff}
 #term{height:480px;background:#000;border-radius:8px;padding:8px}
-#term-slot .term-box{height:calc(100vh - 320px);min-height:420px;background:#000;border-radius:8px;padding:8px}
+#term-slot .term-box{height:calc(100vh - 200px);min-height:500px;background:#000;border-radius:8px;padding:8px}
 #term-slot .term-box .xterm{height:100%;font-size:18px;line-height:1.35}
 .modal{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:50}
 .modal-card{background:#1e293b;padding:20px;border-radius:12px;min-width:380px;max-width:560px;width:90%}
