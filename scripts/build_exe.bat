@@ -6,7 +6,7 @@ REM Ket qua: ssh_manager\LAN-SSH-Manager-win64-<VER>.exe
 setlocal
 cd /d "%~dp0.."
 
-set VER=1.2.4
+if "%VER%"=="" set VER=1.2.5
 set NAME=LAN-SSH-Manager-win64-%VER%
 
 if not exist backend\venv\Scripts\python.exe (
