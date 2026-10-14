@@ -155,6 +155,7 @@ class WinServer:
         self._lock = threading.Lock()
         self.logq: queue.Queue = queue.Queue(maxsize=2000)
         self.last_error = ""
+        self._run_error = ""
 
     def is_running(self):
         return health_ok(self.port)
@@ -168,6 +169,38 @@ class WinServer:
             except Exception:
                 pass
 
+    def _logq_put(self, msg):
+        try:
+            self.logq.put_nowait(msg)
+        except queue.Full:
+            pass
+
+    def _port_busy(self):
+        """Kiểm tra nhanh port có đang bị giữ không (để báo lỗi rõ ràng)."""
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            s.bind(("0.0.0.0", self.port))
+            return False
+        except OSError:
+            return True
+        finally:
+            try:
+                s.close()
+            except OSError:
+                pass
+
+    def _run(self):
+        """Wrapper quanh uvicorn run để giữ lại traceback khi thread chết."""
+        try:
+            self._server.run()
+        except Exception as e:
+            tb = traceback.format_exc(limit=8)
+            self._run_error = f"{e}\n{tb[-2000:]}"
+            self._logq_put(f"ERROR server thread: {e}")
+        else:
+            if not self._run_error:
+                self._run_error = "server thread thoát không rõ lý do (xem log uvicorn bên trên)."
+
     def start(self):
         with self._lock:
             if self.is_running():
@@ -175,24 +208,66 @@ class WinServer:
             if self._thread and self._thread.is_alive():
                 return "already"
             self.last_error = ""
+            self._run_error = ""
             self._attach_logs()
             try:
-                prepare_env()
+                root = prepare_env()
+                # Cảnh báo sớm nếu bundle thiếu frontend (exe build thiếu --add-data)
+                fe = os.path.join(root, "frontend", "index.html")
+                if not os.path.isfile(fe):
+                    self._logq_put(f"WARNING: không thấy frontend tại {fe} (exe có thể thiếu --add-data). API vẫn chạy.")
                 import uvicorn  # noqa: E402
                 from backend.app.main import app  # noqa: E402
             except Exception as e:
                 tb = traceback.format_exc(limit=5)
                 self.last_error = f"Không nạp được backend: {e}\n{tb[-1500:]}"
+                self._logq_put("ERROR " + self.last_error)
                 return "failed"
-            cfg = uvicorn.Config(app, host="0.0.0.0", port=self.port, log_level="info")
-            self._server = uvicorn.Server(cfg)
-            self._thread = threading.Thread(target=self._server.run, daemon=True)
+            if self._port_busy():
+                self.last_error = (f"Port {self.port} đang bị tiến trình khác giữ "
+                                   f"(Address already in use). Đổi port khác hoặc dừng app đang giữ port.")
+                self._logq_put("ERROR " + self.last_error)
+                return "failed"
+            try:
+                cfg = uvicorn.Config(app, host="0.0.0.0", port=self.port, log_level="info")
+                self._server = uvicorn.Server(cfg)
+            except Exception as e:
+                tb = traceback.format_exc(limit=5)
+                self.last_error = f"Không tạo được server (port {self.port}): {e}\n{tb[-1500:]}"
+                self._logq_put("ERROR " + self.last_error)
+                self._server = None
+                return "failed"
+            self._thread = threading.Thread(target=self._run, daemon=True)
             self._thread.start()
             for _ in range(50):  # đợi tối đa ~25s
                 if self.is_running():
                     return "started"
                 if not self._thread.is_alive():
-                    self.last_error = "Tiến trình server dừng bất thường — xem log."
+                    detail = (self._run_error or "").strip()
+                    # Lấy thêm vài dòng log uvicorn cuối để đoán nguyên nhân
+                    tail = []
+                    while True:
+                        try:
+                            tail.append(self.logq.get_nowait())
+                        except queue.Empty:
+                            break
+                    for line in tail:
+                        self._logq_put(line)
+                    hint = ""
+                    blob = "\n".join(tail[-20:]) + "\n" + detail
+                    if "Address already in use" in blob or "10048" in blob:
+                        hint = f"Port {self.port} đang bận."
+                    elif "No module named" in blob or "ModuleNotFoundError" in blob:
+                        hint = "Thiếu thư viện trong exe (build thiếu --collect-all)."
+                    elif "Permission" in blob:
+                        hint = "Thiếu quyền (port <1024 hoặc thư mục data không ghi được)."
+                    self.last_error = "Server dừng bất thường."
+                    if hint:
+                        self.last_error += f" {hint}"
+                    if detail:
+                        self.last_error += f"\nChi tiết: {detail[-1200:]}"
+                    elif tail:
+                        self.last_error += f"\nLog cuối: {tail[-1][:500] if tail else ''}"
                     self._server = None
                     return "failed"
                 time.sleep(0.5)

@@ -3,6 +3,30 @@
 > Quy ước: mỗi lần sửa app (tính năng, fix bug, đổi config mặc định) đều ghi thêm
 > mục mới **lên đầu** file này, ghi ngày + nội dung + file liên quan.
 
+## 2026-10-14 — Fix exe Windows không khởi động được server (bản 1.2.6)
+
+- Triệu chứng: chạy `ssh_manager/LAN-SSH-Manager-win64-1.0.exe` → bấm Khởi động
+  chỉ báo chung chung "Tiến trình server dừng bất thường", không rõ lý do.
+  Exe 1.0 build từ code cũ, thiếu thư viện runtime (chỉ `--collect-all`
+  uvicorn/asyncssh) nên `import backend.app.main` (sqlalchemy/jose/bcrypt/
+  cryptography/multipart/websockets/serial/jinja2/...) dễ chết ngay trong
+  thread mà không để lại traceback.
+- Sửa `gui/app_win.py` (`WinServer`): bọc `server.run()` bằng `_run()` giữ
+  traceback vào `last_error` + log; check port bận TRƯỚC khi start (báo rõ
+  "Port X đang bị tiến trình khác giữ" thay vì "dừng bất thường"); cảnh báo
+  sớm nếu bundle thiếu `frontend/index.html`; khi thread chết thì kèm hint
+  (port bận / thiếu lib / thiếu quyền) + chi tiết cuối vào popup lỗi.
+  `python -m py_compile` + `--selftest-headless` (port 18011) PASS; test port
+  bận (18013) trả đúng thông báo port bận.
+- Sửa đóng gói: `scripts/build_exe.bat` VER `1.2.6` + thêm `--paths .`,
+  `--hidden-import` cho toàn bộ `backend.app.api.*` + uvicorn submodules,
+  `--collect-all` cho sqlalchemy/jose/bcrypt/cryptography/multipart/websockets/
+  serial/jinja2/pydantic_settings (+ copy-metadata). Đồng bộ
+  `.github/workflows/build-exe.yml` (version mặc định 1.2.6).
+- Build mới: `ssh_manager/LAN-SSH-Manager-win64-1.2.6.exe` (thay 1.0 cũ).
+  Verify: exe selftest exit=0, tạo DB + seed admin OK trong bundle frozen.
+  File `.exe` không push lên git (gitignore, build bằng GitHub Actions).
+
 ## 2026-09-15 — Giải trí: phát nền khi chuyển tab + tìm kiếm ở tab Xem
 
 - Tab Xem (`frontend/entertainment.js` `renderWatch`): thêm ô tìm kiếm toàn cục
